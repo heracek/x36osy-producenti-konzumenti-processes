@@ -1,0 +1,96 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+	<title>Semestrální úloha X36OSY 2007</title>
+</head>
+<body>
+  <center><h1>Semestrální úloha X36OSY 2007</h1></center>
+	<center>Téma úlohy:  Producenti a konzumenti</center>
+  <center>Vypracoval: Tomas Horacek <horact1@fel.cvut.cz></center>
+  <br />
+  <center>6. ročník, obor Výpočetní technika, K336 FEL ČVUT,<br />
+  Karlovo nám. 13, 121 35 Praha 2 </center>
+  
+	<h2>Zadání úlohy</h2>
+	<p>
+		Mějme <i>m</i> producentů a <i>n</i> konzumentů. 
+		Každý producent má svojí frontu o kapacitě <i>k</i> položek, 
+		do které v náhodných intervalech zapisuje pokud je v ní volno, jinak se zablokuje a čeká.
+		Položky ve frontách obsahují číslo producenta a pořadové číslo, ve kterém byly zapsány do fronty.
+		Konzumenti v náhodných intervalech čtou položky z front. Každý konzument musí přečíst všechny
+		položky od všech producentů, tzn. že položky se mohou odstranit z front až
+		po přečtení všemi konzumenty.
+	</p>
+	
+	
+	<p><b>Vstup:</b> Producenti a konzumenti jsou reprezentováni vlákny/procesy a náhodně generují/čtou položky.</p>
+	<p><b>Výstup:</b> Informace o tom, jak se mění obsah jednotlivých front a informace v jakém stavu se producenti a konzument nacházejí.</p>
+	
+  <h2>Analýza úlohy</h2>
+  
+  
+  
+  <h2>Řešení úlohy pomocí vláken</h2>
+  
+  <p>Reseni je za pomoci mutexu, pseoudokod popisujici algoritmus je zde:</p>
+  
+  <code><pre>
+    def my_producent():
+        for cislo_prvku in range(LIMIT_PRVKU):
+            while je_fronta_plna():
+                pockej_na_uvolneni_prvku()
+
+            zamkni_frontu()
+            pridej_prvek_do_fronty()
+            odemkni_frontu()
+
+            pockej_nahodnou_dobu()
+
+        ukonci_vlakno()
+  </pre></code>
+  <code><pre>
+    def konzument():
+        while True:
+            pockej_nahodnou_dobu()
+
+            ukonci_cteni = True
+            for producent in range(M_PRODUCENTU):
+                zamkni_frontu()
+                if not fornta_je_prazdna():
+                    prvek = fronta[producent].front()
+
+                    if prvek.poradove_cislo != poradova_cisla_poslednich_prectenych_prveku[producent]:
+                        prvek.pocet_precteni++
+
+                        if prvek.pocet_precteni == N_KONZUMENTU:
+                            fronta[producent].pop()
+                            delete prvek;
+                            zavolej_uvolneni_prvku()
+
+                        poradova_cisla_poslednich_prectenych_prveku[producent] = prvek.poradove_cislo
+                odemkni_frontu()
+
+                if ukonci_cteni:
+                    ukonci_cteni = poradova_cisla_poslednich_prectenych_prveku[producent] == (LIMIT_PRVKU - 1)
+
+            if ukonci_cteni:
+                ukonci_vlakno()
+  </pre></code>
+
+  <h2>Řešení úlohy pomocí procesů</h2>
+
+  <h2>Závěr</h2> 
+  
+  Uloha mi pomohla prakticky vyzkouset tvoreni vlaken a jejich synchronizaci.
+
+  <h2>Literatura</h2>
+  
+  <ol>
+    <li>Slides ze cviceni</li>
+    <li>Priklady ze cviceni</li>
+    <li>manualove stranky</li>
+  </ol>
+  
+</body>
+</html>
