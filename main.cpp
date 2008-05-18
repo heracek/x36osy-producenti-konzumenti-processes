@@ -18,10 +18,10 @@ using namespace std;
 #define K_POLOZEK 3
 #define LIMIT_PRVKU 10
 
-#define NUM_THREADS M_PRODUCENTU + N_KONZUMENTU
+#define NUM_CHILDREN M_PRODUCENTU + N_KONZUMENTU
 #define MAX_NAHODNA_DOBA 50000
 
-int thread_ids[NUM_THREADS];
+pid_t *child_pids;
 pthread_cond_t condy_front[M_PRODUCENTU];
 pthread_mutex_t mutexy_front[M_PRODUCENTU];
 struct Prvek;
@@ -64,7 +64,7 @@ def my_producent():
     
     ukonci_vlakno()
  */
-void *my_producent(void *idp) {
+void *xmy_producent(void *idp) {
     int cislo_producenta = *((int *) idp);
     Prvek *prvek;
     int velikos_fronty;
@@ -127,7 +127,7 @@ def konzument():
         if ukonci_cteni:
             ukonci_vlakno()
  */
-void *konzument(void *idp) {
+void *xkonzument(void *idp) {
     int cislo_konzumenta = *((int *) idp) - M_PRODUCENTU;
     bool ukonci_cteni;
     int cislo_producenta;
@@ -218,13 +218,34 @@ void *konzument(void *idp) {
     pthread_exit(NULL);
 }
 
+void producent(int cislo_producenta) {
+    printf("Producent %d.\n", cislo_producenta);
+    sleep(10);
+    printf("Producent %d done.\n", cislo_producenta);
+}
+
+void konzument(int cislo_konzumenta) {
+    printf("Konzument %d.\n", cislo_konzumenta);
+    sleep(10);
+    printf("Konzument %d done.\n", cislo_konzumenta);
+}
+
+void wait_for_all_children() {
+    int status;
+    
+    for (int i = 0; i < NUM_CHILDREN; i++) {
+        wait(&status);
+    }
+}
+
 int main(int argc, char * const argv[]) {
     pid_t root_pid = getpid();
     pid_t child_pid;
     char typ;
     int cislo;
-    
     printf ("the main program process id is %d\n", (int) getpid ());
+    
+    child_pids = new pid_t[NUM_CHILDREN];
     
     for (int i = 0; i < M_PRODUCENTU; i++) {
         typ = 'P';
@@ -232,44 +253,33 @@ int main(int argc, char * const argv[]) {
         
         child_pid = fork ();
         if (child_pid != 0) {
-            if (root_pid == 0) {
-                root_pid = getpid();
-            }
-            printf ("this is the parent process, with id %d\n", (int) getpid ());
-            printf ("the child's process id is %d\n", (int) child_pid);
-            sleep(1);
+            child_pids[i] = child_pid;
         }
         else {
-            printf ("this is the child process, with id %d, ROOT: %d, typ: %c, cislo: %i\n", (int) getpid (), (int) root_pid, typ, cislo);
-            sleep(20);
-            break;
+            producent(i);
+            exit(0);
         }
     }
     
-    if (root_pid == getpid()) {
-        for (int i = 0; i < N_KONZUMENTU; i++) {
-            typ = 'K';
-            cislo = i;
+    for (int i = 0; i < N_KONZUMENTU; i++) {
+        typ = 'K';
+        cislo = i;
 
-            child_pid = fork ();
-            if (child_pid != 0) {
-                if (root_pid == 0) {
-                    root_pid = getpid();
-                }
-                printf ("this is the parent process, with id %d\n", (int) getpid ());
-                printf ("the child's process id is %d\n", (int) child_pid);
-                sleep(1);
-            }
-            else {
-                printf ("this is the child process, with id %d, ROOT: %d, typ: %c, cislo: %i\n", (int) getpid (), (int) root_pid, typ, cislo);
-                sleep(20);
-                break;
-            }
+        child_pid = fork ();
+        if (child_pid != 0) {
+            child_pids[i + M_PRODUCENTU] = child_pid;
         }
-        if (root_pid == getpid()) {
-            sleep(20);
+        else {
+            konzument(i);
+            exit(0);
         }
     }
+    
+    wait_for_all_children();
+    
+    printf("All done.\n");
+    
+    delete[] child_pids;
     
     return 0;
 }
