@@ -35,16 +35,30 @@ int shared_mem_segment_id;
 Shared *shared;
 Fronta **fronty;
 char process_name[MAX_NAME_SIZE];
+int sem_pristup_ke_fronte;
+int sem_mohu_vlozit;
+int sem_mohu_cist;
 
 struct Prvek {
     int cislo_producenta;
     int poradove_cislo;
     int pocet_precteni;
     
+    Prvek() :
+        cislo_producenta(0),
+        poradove_cislo(0),
+        pocet_precteni(0) { }
+    
     Prvek(int cislo_producenta, int poradove_cislo) :
         cislo_producenta(cislo_producenta),
         poradove_cislo(poradove_cislo),
         pocet_precteni(0) { }
+    
+    void init(int _cislo_producenta, int _poradove_cislo) {
+        this->cislo_producenta = _cislo_producenta;
+        this->poradove_cislo = _poradove_cislo;
+        this->pocet_precteni = 0;
+    }
 };
 
 class Fronta {
@@ -82,11 +96,7 @@ public:
     int size() {
         return this->_size;
     }
-    
-    int full() {
-        return this->_size == K_POLOZEK;
-    }
-    
+        
     int empty() {
         return this->_size == 0;
     }
@@ -96,10 +106,10 @@ public:
     }
     
     void push(Prvek &prvek) {
-        
+        this->_size++;
     }
     
-    void pop() {
+    Prvek &pop() {
         
     }
     
@@ -166,55 +176,6 @@ void pockej_nahodnou_dobu() {
     
     for (int j = 0; j < doba; j++)
         result = result + (double)random();
-}
-
-/**
- * void *my_producent(void *idp)
- *
- * pseudokod:
- *
-def my_producent():
-    for cislo_prvku in range(LIMIT_PRVKU):
-        while je_fronta_plna():
-            pockej_na_uvolneni_prvku()
-        
-        zamkni_frontu()
-        pridej_prvek_do_fronty()
-        odemkni_frontu()
-        
-        pockej_nahodnou_dobu()
-    
-    ukonci_vlakno()
- */
-void *xmy_producent(void *idp) {
-    int cislo_producenta = *((int *) idp);
-    Prvek *prvek;
-    int velikos_fronty;
-    for (int poradove_cislo = 0; poradove_cislo < LIMIT_PRVKU; poradove_cislo++) {
-        prvek = new Prvek(cislo_producenta, poradove_cislo);
-        
-        pthread_mutex_lock(&mutexy_front[cislo_producenta]);
-        
-        while ((velikos_fronty = xfronty[cislo_producenta].size()) > K_POLOZEK) {
-            printf("PRODUCENT %i je zablokovan - velikost fronty %i\n", cislo_producenta, velikos_fronty);
-            pthread_cond_wait(&condy_front[cislo_producenta], &mutexy_front[cislo_producenta]);
-        }
-        
-        xfronty[cislo_producenta].push(prvek);
-        
-        pthread_mutex_unlock(&mutexy_front[cislo_producenta]);
-        
-        printf("PRODUCENT %i pridal prvek %i - velikos fronty %i\n",
-            cislo_producenta,
-            poradove_cislo,
-            velikos_fronty
-            );
-        
-        pockej_nahodnou_dobu();
-    }
-    
-    printf("PRODUCENT %i konec\n", cislo_producenta);
-    pthread_exit(NULL);
 }
 
 /**
@@ -343,26 +304,6 @@ void *xkonzument(void *idp) {
     pthread_exit(NULL);
 }
 
-void producent(int cislo_producenta) {
-    snprintf(process_name, MAX_NAME_SIZE, "Producent %d [PID:%d]", cislo_producenta, (int) getpid());
-    printf("%s.\n", process_name);
-    
-    Shared::connect_and_init_local_ptrs();
-    
-    sleep(3);
-    printf("%s done.\n", process_name);
-}
-
-void konzument(int cislo_konzumenta) {
-    snprintf(process_name, MAX_NAME_SIZE, "Konzument %d [PID:%d]", cislo_konzumenta, (int) getpid());
-    printf("%s.\n", process_name);
-    
-    Shared::connect_and_init_local_ptrs();
-    
-    sleep(3);
-    printf("%s done.\n", process_name);
-}
-
 void alloc_shared_mem() {
     int shared_segment_size = Shared::get_total_sizeof();
     printf("%s alokuje pamet velikosti %dB.\n", process_name, shared_segment_size);
@@ -382,52 +323,37 @@ void wait_for_all_children() {
     }
 }
 
-void root_init() {
-    child_pids = new pid_t[NUM_CHILDREN];
-    alloc_shared_mem();
-}
-
-void dealloc_shared_resources() {
-    dealloc_shared_mem();
-    printf("%s dealokoval sdilene prostredky.\n", process_name);
-}
-
-void root_finish() {
-    wait_for_all_children();
-    
-    dealloc_shared_resources();
-    delete[] child_pids;
-}
-
 void singnal_handler(int signal_number) {
-    printf("%s prijal signal %d", process_name, signal_number);
+    printf("%s prijal signal %d\n", process_name, signal_number);
     shared->pokracovat_ve_vypoctu = 0;
 }
 
 void init_sinals() {
-    struct sigaction sa;
-    memset (&sa, 0, sizeof (sa));
-    sa.sa_handler = &singnal_handler;
-    sigaction(SIGQUIT, &sa, NULL);
+    signal(SIGQUIT, singnal_handler);
+    signal(SIGINT, singnal_handler);
+    signal(SIGHUP, singnal_handler);
+    signal(SIGTERM, singnal_handler);
 }
 
-int semaphore_allocation(key_t key, int semnum, int sem_flags) {
-    return semget(key, semnum, sem_flags);
-}
-
-int semaphore_initialize(int semid, int semnum, int init_value) {
-    semun argument;
-    u_short *values = new u_short[semnum];
+int semaphore_allocation(int semnum) {
+    int sem_flags = IPC_CREAT | IPC_EXCL | SEM_R | SEM_A | SEM_R>>3 | SEM_A>>3 | SEM_R>>6 | SEM_A>>6;
+    int ret_val = semget(IPC_PRIVATE, semnum, sem_flags);
     
-    for (int i = 0; i < semnum; i++) {
-        values[i] = init_value;
+    if (ret_val < 0) {
+        printf("Nepodarilo se inicializovat semafor.\n");
+        exit(1);
     }
     
-    argument.array = values;
-    int ret_val = semctl(semid, 0, SETALL, argument);
-    
-    delete[] values;
     return ret_val;
+}
+
+void semaphore_initialize(int semid, int semnum, int init_value) {
+    semun argument;
+    
+    for (int i = 0; i < semnum; i++) {
+        argument.val = init_value;
+        semctl(semid, i, SETVAL, argument);
+    }
 }
 
 int semaphore_deallocate(int semid, int semnum) {
@@ -457,11 +383,205 @@ int semaphore_up(int semid, int sem_index) {
     return semop(semid, operations, 1);
 }
 
+int semaphore_get(int semafor, int sem_index){
+    return semctl(semafor, sem_index, GETVAL, 0);
+}
+
+void dealloc_shared_resources() {
+    dealloc_shared_mem();
+    semaphore_deallocate(sem_mohu_vlozit, M_PRODUCENTU);
+    semaphore_deallocate(sem_mohu_cist, M_PRODUCENTU);
+    semaphore_deallocate(sem_pristup_ke_fronte, M_PRODUCENTU);
+    printf("%s dealokoval sdilene prostredky.\n", process_name);
+}
+
+void child_init() {
+    init_sinals();
+    
+    Shared::connect_and_init_local_ptrs();
+}
+
+
+void root_init() {
+    child_pids = new pid_t[NUM_CHILDREN];
+    alloc_shared_mem();
+    
+    init_sinals();
+    
+    Shared::connect_and_init_local_ptrs();
+    
+    shared->pokracovat_ve_vypoctu = 1;
+    
+    sem_mohu_vlozit = semaphore_allocation(M_PRODUCENTU);
+    semaphore_initialize(sem_mohu_vlozit, M_PRODUCENTU, K_POLOZEK);
+    
+    sem_mohu_cist = semaphore_allocation(M_PRODUCENTU);
+    semaphore_initialize(sem_mohu_cist, M_PRODUCENTU, 0);
+    
+    sem_pristup_ke_fronte = semaphore_allocation(M_PRODUCENTU);
+    semaphore_initialize(sem_pristup_ke_fronte, M_PRODUCENTU, 1);
+    
+    for (int i = 0; i < M_PRODUCENTU; i++) {
+        printf("Semafory nastaveny na: sem_mohu_vlozit(%d), sem_mohu_cist(%d), sem_pristup_ke_fronte(%d)\n",
+            semaphore_get(sem_mohu_vlozit, i),
+            semaphore_get(sem_mohu_cist, i),
+            semaphore_get(sem_pristup_ke_fronte, i));
+    }
+}
+
+
+void root_finish() {
+    wait_for_all_children();
+    
+    dealloc_shared_resources();
+    delete[] child_pids;
+}
+
+void zamkni_frontu(int cislo_fronty) {
+    semaphore_down(sem_pristup_ke_fronte, cislo_fronty);
+}
+
+void odemkni_frontu(int cislo_fronty) {
+    semaphore_up(sem_pristup_ke_fronte, cislo_fronty);
+}
+
+void pockej_na_moznost_vkladat_prvek(int cislo_fronty) {
+    semaphore_down(sem_mohu_vlozit, cislo_fronty);
+}
+
+void umozni_vlozeni_prvku(int cislo_fronty) {
+    semaphore_up(sem_mohu_vlozit, cislo_fronty);
+}
+
+void umozni_cteni_z_fronty(int cislo_fronty) {
+    semaphore_up(sem_mohu_cist, cislo_fronty);
+}
+
+void pockej_na_moznost_cteni_z_fornty(int cislo_fronty) {
+    semaphore_down(sem_mohu_cist, cislo_fronty);
+}
+
+/**
+ * void producent(int cislo_producenta)
+ *
+ * pseudokod:
+ *
+def producent():
+    for poradove_cislo in range(LIMIT_PRVKU):
+        pockej_na_moznost_vkladat_prvek()
+        
+        zamkni_frontu()
+        pridej_prvek_do_fronty()
+        odemkni_frontu()
+        
+        
+        pockej_nahodnou_dobu()
+    
+    ukonci_vlakno()
+ */
+void producent(int cislo_producenta) {
+    snprintf(process_name, MAX_NAME_SIZE, "PRODUCENT %d [PID:%d]", cislo_producenta, (int) getpid());
+    printf("%s zacatek.\n", process_name);
+    
+    child_init();
+    
+    Prvek prvek;
+    int velikos_fronty;
+    
+    for (int poradove_cislo = 0; poradove_cislo < LIMIT_PRVKU; poradove_cislo++) {
+        if (shared->pokracovat_ve_vypoctu) {
+            prvek.init(cislo_producenta, poradove_cislo);
+            
+            zamkni_frontu(cislo_producenta);
+            
+            velikos_fronty = fronty[cislo_producenta]->size();
+            
+            if (velikos_fronty >= K_POLOZEK) {
+                odemkni_frontu(cislo_producenta);
+                
+                printf("%s ceka na uvolneni fronty.\n", process_name);
+                pockej_na_moznost_vkladat_prvek(cislo_producenta);
+                printf("%s muze vlozit do fronty.\n", process_name);
+                
+                zamkni_frontu(cislo_producenta);
+            } else {
+                pockej_na_moznost_vkladat_prvek(cislo_producenta);
+            }
+            
+            // pridej_prvek_do_fronty()
+            fronty[cislo_producenta]->push(prvek);
+            
+            umozni_cteni_z_fronty(cislo_producenta);
+            
+            odemkni_frontu(cislo_producenta);
+            
+            printf("%s pridal prvek %i - velikos fronty %i\n",
+                process_name, poradove_cislo, velikos_fronty);
+            
+            pockej_nahodnou_dobu();
+        } else {
+            break;
+        }
+    }
+    
+    printf("%s done.\n", process_name);
+}
+
+/**
+ * void konzument(int cislo_konzumenta)
+ *
+ * pseudokod:
+ *
+def konzument():
+    while True:
+        pockej_nahodnou_dobu()
+        
+        ukonci_cteni = True
+        for producent in range(M_PRODUCENTU):
+            zamkni_frontu()
+            if not fornta_je_prazdna():
+                prvek = fronta[producent].front()
+                
+                if prvek.poradove_cislo != poradova_cisla_poslednich_prectenych_prveku[producent]:
+                    prvek.pocet_precteni++
+                    
+                    if prvek.pocet_precteni == N_KONZUMENTU:
+                        fronta[producent].pop()
+                        delete prvek;
+                        zavolej_uvolneni_prvku()
+                    
+                    poradova_cisla_poslednich_prectenych_prveku[producent] = prvek.poradove_cislo
+            odemkni_frontu()
+            
+            if ukonci_cteni:
+                ukonci_cteni = poradova_cisla_poslednich_prectenych_prveku[producent] == (LIMIT_PRVKU - 1)
+            
+        if ukonci_cteni:
+            ukonci_vlakno()
+ */
+void konzument(int cislo_konzumenta) {
+    snprintf(process_name, MAX_NAME_SIZE, "Konzument %d [PID:%d]", cislo_konzumenta, (int) getpid());
+    printf("%s zacatek.\n", process_name);
+    
+    child_init();
+    
+    
+    for (int i = 0; i < LIMIT_PRVKU; i++) {
+       if (shared->pokracovat_ve_vypoctu) {
+           sleep(1);
+       } else {
+           break;
+       }
+    }
+    
+    printf("%s done.\n", process_name);
+}
+
 int main(int argc, char * const argv[]) {
+    pid_t root_pid = getpid();
     bool exception = false;
     
     try {
-        pid_t root_pid = getpid();
         pid_t child_pid;
     
         snprintf(process_name, MAX_NAME_SIZE, "Hlavni proces [PID:%d]", (int) getpid());
@@ -471,8 +591,6 @@ int main(int argc, char * const argv[]) {
     
         printf("Velikos Shared: %d, velikost Fronta: %d, velikost Prvek: %d.\n",
             Shared::get_total_sizeof(), Fronta::get_total_sizeof(), sizeof(Prvek));
-    
-        Shared::connect_and_init_local_ptrs();
     
         printf("Shared addr: %p (%d).\n", shared, (unsigned int) shared);
     
@@ -503,13 +621,16 @@ int main(int argc, char * const argv[]) {
     } catch(...) {
         exception = true;
     }
-    root_finish();
+    
+    if (getpid() == root_pid) {
+        root_finish();
+    }
     
     if ( ! exception) {
         printf("All OK. Done.\n");
         return 0;
     } else {
-        printf("Exception caught in main(). Done.\n");
+        printf("%s exception caught in main(). Done.\n", process_name);
         return 1;
     }
 }
