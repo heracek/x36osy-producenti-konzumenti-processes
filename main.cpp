@@ -342,8 +342,9 @@ void *xkonzument(void *idp) {
 
 void producent(int cislo_producenta) {
     snprintf(process_name, MAX_NAME_SIZE, "Producent %d [PID:%d]", cislo_producenta, (int) getpid());
-    
     printf("%s.\n", process_name);
+    
+    Shared::connect_and_init_local_ptrs();
     
     sleep(3);
     printf("%s done.\n", process_name);
@@ -351,8 +352,10 @@ void producent(int cislo_producenta) {
 
 void konzument(int cislo_konzumenta) {
     snprintf(process_name, MAX_NAME_SIZE, "Konzument %d [PID:%d]", cislo_konzumenta, (int) getpid());
-    
     printf("%s.\n", process_name);
+    
+    Shared::connect_and_init_local_ptrs();
+    
     sleep(3);
     printf("%s done.\n", process_name);
 }
@@ -393,45 +396,57 @@ void root_finish() {
 }
 
 int main(int argc, char * const argv[]) {
-    pid_t root_pid = getpid();
-    pid_t child_pid;
+    bool exception = false;
     
-    snprintf(process_name, MAX_NAME_SIZE, "Hlavni proces [PID:%d]", (int) getpid());
-    printf ("%s.\n", process_name, (int) root_pid);
+    try {
+        pid_t root_pid = getpid();
+        pid_t child_pid;
     
-    root_init();
+        snprintf(process_name, MAX_NAME_SIZE, "Hlavni proces [PID:%d]", (int) getpid());
+        printf ("%s.\n", process_name, (int) root_pid);
     
-    Shared::connect_and_init_local_ptrs();
+        root_init();
     
-    printf("Shared: %p (%d)\n", shared, (unsigned int) shared);
+        printf("Velikos Shared: %d, velikost Fronta: %d, velikost Prvek: %d.\n",
+            Shared::get_total_sizeof(), Fronta::get_total_sizeof(), sizeof(Prvek));
     
-    for (int i = 0; i < M_PRODUCENTU; i++) {
+        Shared::connect_and_init_local_ptrs();
+    
+        printf("Shared addr: %p (%d).\n", shared, (unsigned int) shared);
+    
+        for (int i = 0; i < M_PRODUCENTU; i++) {
+            printf("Fronta %d addr: %p (relativni: %d).\n", i , fronty[i], (unsigned int) fronty[i] - (unsigned int) shared);
         
-        printf("Fronta %d: %p (%d)\n", i , fronty[i], (unsigned int) fronty[i] - (unsigned int) shared);
+            fronty[i]->init();
         
-        fronty[i]->init();
-        
-        child_pid = fork();
-        if (child_pid != 0) {
-            child_pids[i] = child_pid;
-        } else {
-            producent(i);
-            exit(0);
+            child_pid = fork();
+            if (child_pid != 0) {
+                child_pids[i] = child_pid;
+            } else {
+                producent(i);
+                exit(0);
+            }
         }
-    }
     
-    for (int i = 0; i < N_KONZUMENTU; i++) {
-        child_pid = fork ();
-        if (child_pid != 0) {
-            child_pids[i + M_PRODUCENTU] = child_pid;
-        } else {
-            konzument(i);
-            exit(0);
+        for (int i = 0; i < N_KONZUMENTU; i++) {
+            child_pid = fork ();
+            if (child_pid != 0) {
+                child_pids[i + M_PRODUCENTU] = child_pid;
+            } else {
+                konzument(i);
+                exit(0);
+            }
         }
+    } catch(...) {
+        exception = true;
     }
-    
     root_finish();
     
-    printf("All done.\n");
-    return 0;
+    if ( ! exception) {
+        printf("All OK. Done.\n");
+        return 0;
+    } else {
+        printf("Exception caught in main(). Done.\n");
+        return 1;
+    }
 }
