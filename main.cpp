@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include <iostream>
 #include <queue>
+#include <sys/types.h>
+#include <unistd.h>
 using namespace std;
 
 #define M_PRODUCENTU 5
@@ -216,47 +218,58 @@ void *konzument(void *idp) {
     pthread_exit(NULL);
 }
 
-int main (int argc, char * const argv[]) {    
-    int i;
-    pthread_t threads[NUM_THREADS];
-    pthread_attr_t attr;
+int main(int argc, char * const argv[]) {
+    pid_t root_pid = getpid();
+    pid_t child_pid;
+    char typ;
+    int cislo;
     
-    for (int cislo_producenta = 0; cislo_producenta < M_PRODUCENTU; cislo_producenta++) {
-        pthread_mutex_init(&mutexy_front[cislo_producenta], NULL);
-        pthread_cond_init (&condy_front[cislo_producenta], NULL);
+    printf ("the main program process id is %d\n", (int) getpid ());
+    
+    for (int i = 0; i < M_PRODUCENTU; i++) {
+        typ = 'P';
+        cislo = i;
+        
+        child_pid = fork ();
+        if (child_pid != 0) {
+            if (root_pid == 0) {
+                root_pid = getpid();
+            }
+            printf ("this is the parent process, with id %d\n", (int) getpid ());
+            printf ("the child's process id is %d\n", (int) child_pid);
+            sleep(1);
+        }
+        else {
+            printf ("this is the child process, with id %d, ROOT: %d, typ: %c, cislo: %i\n", (int) getpid (), (int) root_pid, typ, cislo);
+            sleep(20);
+            break;
+        }
     }
     
-    for (int thread_id = 0; thread_id < NUM_THREADS; thread_id++) {
-        thread_ids[thread_id] = thread_id;
-    }
-    
-    /*
-    For portability, explicitly create threads in a joinable state 
-    */
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-    
-    int thred_i;
-    for (thred_i = 0; thred_i < M_PRODUCENTU; thred_i++) {
-        pthread_create(&threads[thred_i], &attr, my_producent, (void *)&thread_ids[thred_i]);
-    }
-    
-    for (thred_i = M_PRODUCENTU; thred_i < NUM_THREADS; thred_i++) {
-        pthread_create(&threads[thred_i], &attr, konzument, (void *)&thread_ids[thred_i]);
-    }
-    
-    /* Wait for all threads to complete */
-    for (i = 0; i < NUM_THREADS; i++) {
-        pthread_join(threads[i], NULL);
-    }
-    printf ("Main(): Waited on %d  threads. Done.\n", NUM_THREADS);
+    if (root_pid == getpid()) {
+        for (int i = 0; i < N_KONZUMENTU; i++) {
+            typ = 'K';
+            cislo = i;
 
-    /* Clean up and exit */
-    pthread_attr_destroy(&attr);
-    for (int cislo_producenta = 0; cislo_producenta < M_PRODUCENTU; cislo_producenta++) {
-        pthread_mutex_destroy(&mutexy_front[cislo_producenta]);
-        pthread_cond_destroy(&condy_front[cislo_producenta]);
+            child_pid = fork ();
+            if (child_pid != 0) {
+                if (root_pid == 0) {
+                    root_pid = getpid();
+                }
+                printf ("this is the parent process, with id %d\n", (int) getpid ());
+                printf ("the child's process id is %d\n", (int) child_pid);
+                sleep(1);
+            }
+            else {
+                printf ("this is the child process, with id %d, ROOT: %d, typ: %c, cislo: %i\n", (int) getpid (), (int) root_pid, typ, cislo);
+                sleep(20);
+                break;
+            }
+        }
+        if (root_pid == getpid()) {
+            sleep(20);
+        }
     }
-    pthread_exit (NULL);
+    
     return 0;
 }

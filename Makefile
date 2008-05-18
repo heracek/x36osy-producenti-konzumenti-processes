@@ -11,6 +11,9 @@ default:	main
 main:main.cpp
 	$(CC) $(CFLAGS) -o main main.cpp $(LIBS)
 
+run:main
+	./main
+
 clear:
 	\rm main 
 
