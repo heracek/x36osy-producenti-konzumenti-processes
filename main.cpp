@@ -7,25 +7,33 @@
 
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <iostream>
 #include <queue>
+#include <signal.h>
+#include <sys/shm.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 using namespace std;
 
-#define M_PRODUCENTU 5
-#define N_KONZUMENTU 3
-#define K_POLOZEK 3
-#define LIMIT_PRVKU 10
+struct Prvek;
+struct Fronta;
+struct Shared;
 
-#define NUM_CHILDREN M_PRODUCENTU + N_KONZUMENTU
-#define MAX_NAHODNA_DOBA 50000
+const int M_PRODUCENTU = 5;
+const int N_KONZUMENTU = 3;
+const int K_POLOZEK = 3;
+const int LIMIT_PRVKU = 10;
+const int MAX_NAME_SIZE = 30;
+const int NUM_CHILDREN = M_PRODUCENTU + N_KONZUMENTU;
+const int MAX_NAHODNA_DOBA = 50000;
 
 pid_t *child_pids;
-pthread_cond_t condy_front[M_PRODUCENTU];
-pthread_mutex_t mutexy_front[M_PRODUCENTU];
-struct Prvek;
-queue<Prvek*> fronty[M_PRODUCENTU];
+int shared_mem_segment_id;
+Shared *shared;
+Fronta **fronty;
+char process_name[MAX_NAME_SIZE];
 
 struct Prvek {
     int cislo_producenta;
@@ -37,6 +45,120 @@ struct Prvek {
         poradove_cislo(poradove_cislo),
         pocet_precteni(0) { }
 };
+
+class Fronta {
+    /**
+     * Pametove rozlozeni fronty:
+    
+    Fronta:
+        Instance tridy Fronta:
+            [_size]
+            [_index_of_first]
+        Prvky fronty: (nasleduji okamzite za instanci Fronta)
+            [instance 0 (tridy Prvek) fronty]
+            [instance 1 (tridy Prvek) fronty]
+
+            ...
+
+            [instance K_POLOZEK - 1 (tridy Prvek) fronty] (fixni pocet prvku)
+
+     */
+    unsigned int _size;
+    unsigned int _index_of_first;
+    
+    Prvek *_get_array_of_prvky() {
+        unsigned char *tmp_ptr = (unsigned char *) this;
+        tmp_ptr += sizeof(Fronta);
+        
+        return (Prvek *) tmp_ptr;
+    }
+public:
+    void init() {
+        this->_size = 0;
+        this->_index_of_first = 0;
+    }
+    
+    int size() {
+        return this->_size;
+    }
+    
+    int full() {
+        return this->_size == K_POLOZEK;
+    }
+    
+    int empty() {
+        return this->_size == 0;
+    }
+    
+    void front() {
+        
+    }
+    
+    void push(Prvek &prvek) {
+        
+    }
+    
+    void pop() {
+        
+    }
+    
+    static int get_total_sizeof() {
+        return sizeof(Fronta) + sizeof(Prvek) * K_POLOZEK;
+    }
+};
+
+typedef Fronta *p_Fronta;
+
+struct Shared {
+    /**
+     *
+     * Struktura sdilene pameti:
+    
+    Shared: 
+        [pokracovat_ve_vypoctu]
+    Fronta 0:
+        [instance 0 tridy Fronta]
+        [prveky fronty 0]
+    Fronta 1:
+        [instance 1 tridy Fronta]
+        [prveky fronty 1]
+
+    ...
+    
+    Fronta M_PRODUCENTU - 1:
+        [instance M_PRODUCENTU - 1 tridy Fronta]
+        [prveky fronty M_PRODUCENTU - 1]
+     
+     */
+     
+    volatile sig_atomic_t pokracovat_ve_vypoctu;
+    
+    static void connect_and_init_local_ptrs() {
+        /** Pripoji pament a inicializuje lokalni ukazatele na sdilenou pamet. */
+        
+        shared = (Shared *) shmat(shared_mem_segment_id, NULL, NULL);
+        
+        fronty = new p_Fronta[M_PRODUCENTU];
+        
+        unsigned char *tmp_ptr = (unsigned char *) shared;
+        tmp_ptr += sizeof(Shared);
+        
+        for (int i = 0; i < M_PRODUCENTU; i++) {
+            fronty[i] = (Fronta *) tmp_ptr;
+            tmp_ptr += Fronta::get_total_sizeof();
+        }
+    }
+    
+    static int get_total_sizeof() {
+        int velikost_vesech_front = Fronta::get_total_sizeof() * M_PRODUCENTU;
+        return sizeof(Shared) + velikost_vesech_front;
+    }
+};
+
+
+pthread_cond_t condy_front[M_PRODUCENTU];
+pthread_mutex_t mutexy_front[M_PRODUCENTU];
+queue<Prvek*> xfronty[M_PRODUCENTU];
 
 void pockej_nahodnou_dobu() {
     double result = 0.0;
@@ -73,12 +195,12 @@ void *xmy_producent(void *idp) {
         
         pthread_mutex_lock(&mutexy_front[cislo_producenta]);
         
-        while ((velikos_fronty = fronty[cislo_producenta].size()) > K_POLOZEK) {
+        while ((velikos_fronty = xfronty[cislo_producenta].size()) > K_POLOZEK) {
             printf("PRODUCENT %i je zablokovan - velikost fronty %i\n", cislo_producenta, velikos_fronty);
             pthread_cond_wait(&condy_front[cislo_producenta], &mutexy_front[cislo_producenta]);
         }
         
-        fronty[cislo_producenta].push(prvek);
+        xfronty[cislo_producenta].push(prvek);
         
         pthread_mutex_unlock(&mutexy_front[cislo_producenta]);
         
@@ -152,9 +274,9 @@ void *xkonzument(void *idp) {
         for (cislo_producenta = 0; cislo_producenta < M_PRODUCENTU; cislo_producenta++) {
             pthread_mutex_lock(&mutexy_front[cislo_producenta]);
             
-            if ( ! fronty[cislo_producenta].empty()) {
-                prvek = fronty[cislo_producenta].front();
-                velikos_fronty = fronty[cislo_producenta].size();
+            if ( ! xfronty[cislo_producenta].empty()) {
+                prvek = xfronty[cislo_producenta].front();
+                velikos_fronty = xfronty[cislo_producenta].size();
                 
                 prectene_poradove_cislo = prvek->poradove_cislo;
                 prectene_cislo_producenta = prvek->cislo_producenta;
@@ -164,13 +286,13 @@ void *xkonzument(void *idp) {
                     pocet_precteni = ++(prvek->pocet_precteni);
                     
                     if (prvek->pocet_precteni == N_KONZUMENTU) {
-                        fronty[cislo_producenta].pop();
+                        xfronty[cislo_producenta].pop();
                         delete prvek;
                         
                         pthread_cond_signal(&condy_front[cislo_producenta]);
                         
                         prvek_odstranen = true;
-                        nova_velikos_fronty = fronty[cislo_producenta].size();
+                        nova_velikos_fronty = xfronty[cislo_producenta].size();
                         if (nova_velikos_fronty == (K_POLOZEK - 1)) {
                             pthread_cond_signal(&condy_front[cislo_producenta]);
                             printf("konzument %i odblokoval frontu %i - velikost fronty %i\n",
@@ -219,15 +341,30 @@ void *xkonzument(void *idp) {
 }
 
 void producent(int cislo_producenta) {
-    printf("Producent %d.\n", cislo_producenta);
-    sleep(10);
-    printf("Producent %d done.\n", cislo_producenta);
+    snprintf(process_name, MAX_NAME_SIZE, "Producent %d [PID:%d]", cislo_producenta, (int) getpid());
+    
+    printf("%s.\n", process_name);
+    
+    sleep(3);
+    printf("%s done.\n", process_name);
 }
 
 void konzument(int cislo_konzumenta) {
-    printf("Konzument %d.\n", cislo_konzumenta);
-    sleep(10);
-    printf("Konzument %d done.\n", cislo_konzumenta);
+    snprintf(process_name, MAX_NAME_SIZE, "Konzument %d [PID:%d]", cislo_konzumenta, (int) getpid());
+    
+    printf("%s.\n", process_name);
+    sleep(3);
+    printf("%s done.\n", process_name);
+}
+
+void alloc_shared_mem() {
+    int shared_segment_size = Shared::get_total_sizeof();
+    printf("%s alokuje pamet velikosti %dB.\n", process_name, shared_segment_size);
+    shared_mem_segment_id = shmget(IPC_PRIVATE, shared_segment_size, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
+}
+
+void dealloc_shared_mem() {
+    shmctl(shared_mem_segment_id, IPC_RMID, NULL);
 }
 
 void wait_for_all_children() {
@@ -238,48 +375,63 @@ void wait_for_all_children() {
     }
 }
 
+void root_init() {
+    child_pids = new pid_t[NUM_CHILDREN];
+    alloc_shared_mem();
+}
+
+void dealloc_shared_resources() {
+    dealloc_shared_mem();
+    printf("%s dealokoval sdilene prostredky.\n", process_name);
+}
+
+void root_finish() {
+    wait_for_all_children();
+    
+    dealloc_shared_resources();
+    delete[] child_pids;
+}
+
 int main(int argc, char * const argv[]) {
     pid_t root_pid = getpid();
     pid_t child_pid;
-    char typ;
-    int cislo;
-    printf ("the main program process id is %d\n", (int) getpid ());
     
-    child_pids = new pid_t[NUM_CHILDREN];
+    snprintf(process_name, MAX_NAME_SIZE, "Hlavni proces [PID:%d]", (int) getpid());
+    printf ("%s.\n", process_name, (int) root_pid);
+    
+    root_init();
+    
+    Shared::connect_and_init_local_ptrs();
+    
+    printf("Shared: %p (%d)\n", shared, (unsigned int) shared);
     
     for (int i = 0; i < M_PRODUCENTU; i++) {
-        typ = 'P';
-        cislo = i;
         
-        child_pid = fork ();
+        printf("Fronta %d: %p (%d)\n", i , fronty[i], (unsigned int) fronty[i] - (unsigned int) shared);
+        
+        fronty[i]->init();
+        
+        child_pid = fork();
         if (child_pid != 0) {
             child_pids[i] = child_pid;
-        }
-        else {
+        } else {
             producent(i);
             exit(0);
         }
     }
     
     for (int i = 0; i < N_KONZUMENTU; i++) {
-        typ = 'K';
-        cislo = i;
-
         child_pid = fork ();
         if (child_pid != 0) {
             child_pids[i + M_PRODUCENTU] = child_pid;
-        }
-        else {
+        } else {
             konzument(i);
             exit(0);
         }
     }
     
-    wait_for_all_children();
+    root_finish();
     
     printf("All done.\n");
-    
-    delete[] child_pids;
-    
     return 0;
 }
