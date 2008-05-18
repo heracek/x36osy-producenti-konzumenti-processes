@@ -11,6 +11,7 @@
 #include <iostream>
 #include <queue>
 #include <signal.h>
+#include <sys/sem.h>
 #include <sys/shm.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -155,7 +156,6 @@ struct Shared {
     }
 };
 
-
 pthread_cond_t condy_front[M_PRODUCENTU];
 pthread_mutex_t mutexy_front[M_PRODUCENTU];
 queue<Prvek*> xfronty[M_PRODUCENTU];
@@ -281,7 +281,8 @@ void *xkonzument(void *idp) {
                 prectene_poradove_cislo = prvek->poradove_cislo;
                 prectene_cislo_producenta = prvek->cislo_producenta;
                 
-                if (prectene_poradove_cislo != poradova_cisla_poslednich_prectenych_prveku[cislo_producenta]) {
+                if (prectene_poradove_cislo
+                    != poradova_cisla_poslednich_prectenych_prveku[cislo_producenta]) {
                     nove_nacteny = true;
                     pocet_precteni = ++(prvek->pocet_precteni);
                     
@@ -302,7 +303,8 @@ void *xkonzument(void *idp) {
                         }
                     }
                     
-                    poradova_cisla_poslednich_prectenych_prveku[cislo_producenta] = prectene_poradove_cislo;
+                    poradova_cisla_poslednich_prectenych_prveku[cislo_producenta]
+                        = prectene_poradove_cislo;
                 }
             }
             
@@ -327,7 +329,8 @@ void *xkonzument(void *idp) {
             }
             
             if (ukonci_cteni) {
-                ukonci_cteni = poradova_cisla_poslednich_prectenych_prveku[cislo_producenta] == (LIMIT_PRVKU - 1);
+                ukonci_cteni = poradova_cisla_poslednich_prectenych_prveku[cislo_producenta]
+                    == (LIMIT_PRVKU - 1);
             }
         }
         
@@ -363,7 +366,8 @@ void konzument(int cislo_konzumenta) {
 void alloc_shared_mem() {
     int shared_segment_size = Shared::get_total_sizeof();
     printf("%s alokuje pamet velikosti %dB.\n", process_name, shared_segment_size);
-    shared_mem_segment_id = shmget(IPC_PRIVATE, shared_segment_size, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
+    shared_mem_segment_id = shmget(IPC_PRIVATE, shared_segment_size,
+        IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
 }
 
 void dealloc_shared_mem() {
@@ -395,6 +399,64 @@ void root_finish() {
     delete[] child_pids;
 }
 
+void singnal_handler(int signal_number) {
+    printf("%s prijal signal %d", process_name, signal_number);
+    shared->pokracovat_ve_vypoctu = 0;
+}
+
+void init_sinals() {
+    struct sigaction sa;
+    memset (&sa, 0, sizeof (sa));
+    sa.sa_handler = &singnal_handler;
+    sigaction(SIGQUIT, &sa, NULL);
+}
+
+int semaphore_allocation(key_t key, int semnum, int sem_flags) {
+    return semget(key, semnum, sem_flags);
+}
+
+int semaphore_initialize(int semid, int semnum, int init_value) {
+    semun argument;
+    u_short *values = new u_short[semnum];
+    
+    for (int i = 0; i < semnum; i++) {
+        values[i] = init_value;
+    }
+    
+    argument.array = values;
+    int ret_val = semctl(semid, 0, SETALL, argument);
+    
+    delete[] values;
+    return ret_val;
+}
+
+int semaphore_deallocate(int semid, int semnum) {
+    semun ignored_argument; 
+    return semctl(semid, semnum, IPC_RMID, ignored_argument); 
+}
+
+int semaphore_down(int semid, int sem_index) {
+    /* Wait on a binary semaphore. Block until the semaphore
+       value is positive, then decrement it by one. */
+    sembuf operations[1];
+    operations[0].sem_num = sem_index;
+    operations[0].sem_op = -1;
+    operations[0].sem_flg = SEM_UNDO;
+    
+    return semop(semid, operations, 1);
+}
+
+
+int semaphore_up(int semid, int sem_index) {
+    /* Post to a semaphore: increment its value by one. This returns immediately. */ 
+    sembuf operations[1];
+    operations[0].sem_num = sem_index;
+    operations[0].sem_op = 1;
+    operations[0].sem_flg= SEM_UNDO;
+    
+    return semop(semid, operations, 1);
+}
+
 int main(int argc, char * const argv[]) {
     bool exception = false;
     
@@ -404,7 +466,7 @@ int main(int argc, char * const argv[]) {
     
         snprintf(process_name, MAX_NAME_SIZE, "Hlavni proces [PID:%d]", (int) getpid());
         printf ("%s.\n", process_name, (int) root_pid);
-    
+        
         root_init();
     
         printf("Velikos Shared: %d, velikost Fronta: %d, velikost Prvek: %d.\n",
@@ -415,7 +477,8 @@ int main(int argc, char * const argv[]) {
         printf("Shared addr: %p (%d).\n", shared, (unsigned int) shared);
     
         for (int i = 0; i < M_PRODUCENTU; i++) {
-            printf("Fronta %d addr: %p (relativni: %d).\n", i , fronty[i], (unsigned int) fronty[i] - (unsigned int) shared);
+            printf("Fronta %d addr: %p (relativni: %d).\n",
+                i , fronty[i], (unsigned int) fronty[i] - (unsigned int) shared);
         
             fronty[i]->init();
         
