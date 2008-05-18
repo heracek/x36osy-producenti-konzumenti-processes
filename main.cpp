@@ -22,13 +22,13 @@ struct Prvek;
 struct Fronta;
 struct Shared;
 
-const int M_PRODUCENTU = 5;
+const int M_PRODUCENTU = 10;
 const int N_KONZUMENTU = 3;
-const int K_POLOZEK = 3;
+const int K_POLOZEK = 4;
 const int LIMIT_PRVKU = 10;
 const int MAX_NAME_SIZE = 30;
 const int NUM_CHILDREN = M_PRODUCENTU + N_KONZUMENTU;
-const int MAX_NAHODNA_DOBA = 50000;
+const int MAX_NAHODNA_DOBA = 5000000;
 
 pid_t *child_pids;
 int shared_mem_segment_id;
@@ -37,7 +37,6 @@ Fronta **fronty;
 char process_name[MAX_NAME_SIZE];
 int sem_pristup_ke_fronte;
 int sem_mohu_vlozit;
-int sem_mohu_cist;
 
 struct Prvek {
     int cislo_producenta;
@@ -87,6 +86,11 @@ class Fronta {
         
         return (Prvek *) tmp_ptr;
     }
+    
+    Prvek* next_back() {
+        int i = (this->_index_of_first + this->_size) % K_POLOZEK;
+        return &(this->_get_array_of_prvky()[i]);
+    }
 public:
     void init() {
         this->_size = 0;
@@ -97,20 +101,16 @@ public:
         return this->_size;
     }
         
-    int empty() {
-        return this->_size == 0;
+    Prvek* front() {
+        int i = _index_of_first % K_POLOZEK;
+        return &this->_get_array_of_prvky()[i];
     }
     
-    void front() {
-        
-    }
+    void push(Prvek &prvek);
     
-    void push(Prvek &prvek) {
-        this->_size++;
-    }
-    
-    Prvek &pop() {
-        
+    void pop() {
+        this->_size--;
+        this->_index_of_first = (this->_index_of_first + 1) % K_POLOZEK;
     }
     
     static int get_total_sizeof() {
@@ -166,9 +166,14 @@ struct Shared {
     }
 };
 
-pthread_cond_t condy_front[M_PRODUCENTU];
-pthread_mutex_t mutexy_front[M_PRODUCENTU];
-queue<Prvek*> xfronty[M_PRODUCENTU];
+void Fronta::push(Prvek &prvek) {
+    if (this->_size >= K_POLOZEK) {
+        shared->pokracovat_ve_vypoctu = 0;
+        throw 1;
+    }
+    memcpy(this->next_back(), &prvek, sizeof(Prvek));
+    this->_size++;
+};
 
 void pockej_nahodnou_dobu() {
     double result = 0.0;
@@ -176,132 +181,6 @@ void pockej_nahodnou_dobu() {
     
     for (int j = 0; j < doba; j++)
         result = result + (double)random();
-}
-
-/**
- * void *konzument(void *idp)
- *
- * pseudokod:
- *
-def konzument():
-    while True:
-        pockej_nahodnou_dobu()
-        
-        ukonci_cteni = True
-        for producent in range(M_PRODUCENTU):
-            zamkni_frontu()
-            if not fornta_je_prazdna():
-                prvek = fronta[producent].front()
-                
-                if prvek.poradove_cislo != poradova_cisla_poslednich_prectenych_prveku[producent]:
-                    prvek.pocet_precteni++
-                    
-                    if prvek.pocet_precteni == N_KONZUMENTU:
-                        fronta[producent].pop()
-                        delete prvek;
-                        zavolej_uvolneni_prvku()
-                    
-                    poradova_cisla_poslednich_prectenych_prveku[producent] = prvek.poradove_cislo
-            odemkni_frontu()
-            
-            if ukonci_cteni:
-                ukonci_cteni = poradova_cisla_poslednich_prectenych_prveku[producent] == (LIMIT_PRVKU - 1)
-            
-        if ukonci_cteni:
-            ukonci_vlakno()
- */
-void *xkonzument(void *idp) {
-    int cislo_konzumenta = *((int *) idp) - M_PRODUCENTU;
-    bool ukonci_cteni;
-    int cislo_producenta;
-    int prectene_poradove_cislo;
-    int prectene_cislo_producenta;
-    int velikos_fronty;
-    Prvek *prvek;
-    int poradova_cisla_poslednich_prectenych_prveku[M_PRODUCENTU];
-    bool prvek_odstranen = false;
-    int nova_velikos_fronty;
-    bool nove_nacteny = false;
-    int pocet_precteni;
-    
-    for (int cislo_producenta = 0; cislo_producenta < M_PRODUCENTU; cislo_producenta++) {
-        poradova_cisla_poslednich_prectenych_prveku[cislo_producenta] = -1;
-    }
-    
-    while (1) {
-        pockej_nahodnou_dobu();
-        
-        ukonci_cteni = true;
-        for (cislo_producenta = 0; cislo_producenta < M_PRODUCENTU; cislo_producenta++) {
-            pthread_mutex_lock(&mutexy_front[cislo_producenta]);
-            
-            if ( ! xfronty[cislo_producenta].empty()) {
-                prvek = xfronty[cislo_producenta].front();
-                velikos_fronty = xfronty[cislo_producenta].size();
-                
-                prectene_poradove_cislo = prvek->poradove_cislo;
-                prectene_cislo_producenta = prvek->cislo_producenta;
-                
-                if (prectene_poradove_cislo
-                    != poradova_cisla_poslednich_prectenych_prveku[cislo_producenta]) {
-                    nove_nacteny = true;
-                    pocet_precteni = ++(prvek->pocet_precteni);
-                    
-                    if (prvek->pocet_precteni == N_KONZUMENTU) {
-                        xfronty[cislo_producenta].pop();
-                        delete prvek;
-                        
-                        pthread_cond_signal(&condy_front[cislo_producenta]);
-                        
-                        prvek_odstranen = true;
-                        nova_velikos_fronty = xfronty[cislo_producenta].size();
-                        if (nova_velikos_fronty == (K_POLOZEK - 1)) {
-                            pthread_cond_signal(&condy_front[cislo_producenta]);
-                            printf("konzument %i odblokoval frontu %i - velikost fronty %i\n",
-                                cislo_konzumenta,
-                                cislo_producenta,
-                                velikos_fronty);
-                        }
-                    }
-                    
-                    poradova_cisla_poslednich_prectenych_prveku[cislo_producenta]
-                        = prectene_poradove_cislo;
-                }
-            }
-            
-            pthread_mutex_unlock(&mutexy_front[cislo_producenta]);
-            
-            if (nove_nacteny) {
-                printf("konzument %i cte z fronty %i prvek %i - pocet precteni %i\n",
-                    cislo_konzumenta,
-                    cislo_producenta,
-                    prectene_poradove_cislo,
-                    pocet_precteni);
-                nove_nacteny = false;
-            }
-            
-            if (prvek_odstranen) {
-                printf("konzument %i odsranil z fronty %i prvek %i - velikost fronty %i\n",
-                    cislo_konzumenta,
-                    cislo_producenta,
-                    prectene_poradove_cislo,
-                    nova_velikos_fronty);
-                prvek_odstranen = false;
-            }
-            
-            if (ukonci_cteni) {
-                ukonci_cteni = poradova_cisla_poslednich_prectenych_prveku[cislo_producenta]
-                    == (LIMIT_PRVKU - 1);
-            }
-        }
-        
-        if (ukonci_cteni) {
-            printf("konzument %i konec\n", cislo_konzumenta);
-            pthread_exit(NULL);
-            return NULL;
-        }
-    }
-    pthread_exit(NULL);
 }
 
 void alloc_shared_mem() {
@@ -390,7 +269,6 @@ int semaphore_get(int semafor, int sem_index){
 void dealloc_shared_resources() {
     dealloc_shared_mem();
     semaphore_deallocate(sem_mohu_vlozit, M_PRODUCENTU);
-    semaphore_deallocate(sem_mohu_cist, M_PRODUCENTU);
     semaphore_deallocate(sem_pristup_ke_fronte, M_PRODUCENTU);
     printf("%s dealokoval sdilene prostredky.\n", process_name);
 }
@@ -414,17 +292,13 @@ void root_init() {
     
     sem_mohu_vlozit = semaphore_allocation(M_PRODUCENTU);
     semaphore_initialize(sem_mohu_vlozit, M_PRODUCENTU, K_POLOZEK);
-    
-    sem_mohu_cist = semaphore_allocation(M_PRODUCENTU);
-    semaphore_initialize(sem_mohu_cist, M_PRODUCENTU, 0);
-    
+        
     sem_pristup_ke_fronte = semaphore_allocation(M_PRODUCENTU);
     semaphore_initialize(sem_pristup_ke_fronte, M_PRODUCENTU, 1);
     
     for (int i = 0; i < M_PRODUCENTU; i++) {
-        printf("Semafory nastaveny na: sem_mohu_vlozit(%d), sem_mohu_cist(%d), sem_pristup_ke_fronte(%d)\n",
+        printf("Semafory nastaveny na: sem_mohu_vlozit(%d), sem_pristup_ke_fronte(%d)\n",
             semaphore_get(sem_mohu_vlozit, i),
-            semaphore_get(sem_mohu_cist, i),
             semaphore_get(sem_pristup_ke_fronte, i));
     }
 }
@@ -453,13 +327,6 @@ void umozni_vlozeni_prvku(int cislo_fronty) {
     semaphore_up(sem_mohu_vlozit, cislo_fronty);
 }
 
-void umozni_cteni_z_fronty(int cislo_fronty) {
-    semaphore_up(sem_mohu_cist, cislo_fronty);
-}
-
-void pockej_na_moznost_cteni_z_fornty(int cislo_fronty) {
-    semaphore_down(sem_mohu_cist, cislo_fronty);
-}
 
 /**
  * void producent(int cislo_producenta)
@@ -510,8 +377,7 @@ void producent(int cislo_producenta) {
             
             // pridej_prvek_do_fronty()
             fronty[cislo_producenta]->push(prvek);
-            
-            umozni_cteni_z_fronty(cislo_producenta);
+            velikos_fronty = fronty[cislo_producenta]->size();
             
             odemkni_frontu(cislo_producenta);
             
@@ -565,19 +431,98 @@ void konzument(int cislo_konzumenta) {
     
     child_init();
     
+    int *poradova_cisla_poslednich_prectenych_prveku = new int[M_PRODUCENTU];
     
-    for (int i = 0; i < LIMIT_PRVKU; i++) {
-       if (shared->pokracovat_ve_vypoctu) {
-           sleep(1);
-       } else {
-           break;
-       }
+    for (int cislo_producenta = 0; cislo_producenta < M_PRODUCENTU; cislo_producenta++) {
+        poradova_cisla_poslednich_prectenych_prveku[cislo_producenta] = -1;
+    }
+    
+    Prvek *p_prvek;
+    int prectene_poradove_cislo;
+    int pocet_precteni;
+    int velikos_fronty;
+    int prectene_cislo_producenta;
+    int nova_velikos_fronty;
+    bool nove_nacteny = false;
+    bool prvek_odstranen = false;
+    
+    bool ukonci_cteni = false;
+    while (shared->pokracovat_ve_vypoctu && ! ukonci_cteni) {
+        pockej_nahodnou_dobu();
+        
+        ukonci_cteni = true;
+        for (int cislo_producenta = 0; cislo_producenta < M_PRODUCENTU; cislo_producenta++) {
+            zamkni_frontu(cislo_producenta);
+            velikos_fronty = fronty[cislo_producenta]->size();
+            
+            if (velikos_fronty > 0) {
+                p_prvek = fronty[cislo_producenta]->front();
+                
+                prectene_poradove_cislo = p_prvek->poradove_cislo;
+                prectene_cislo_producenta = p_prvek->cislo_producenta;
+                
+                if (prectene_poradove_cislo
+                        != poradova_cisla_poslednich_prectenych_prveku[cislo_producenta]) {
+                        nove_nacteny = true;
+                        pocet_precteni = ++(p_prvek->pocet_precteni);
+
+                        if (pocet_precteni >= N_KONZUMENTU) {
+                            fronty[cislo_producenta]->pop();
+                            nova_velikos_fronty = fronty[cislo_producenta]->size();
+                            umozni_vlozeni_prvku(cislo_producenta);
+                            
+                            
+                            prvek_odstranen = true;
+                            // nova_velikos_fronty = xfronty[cislo_producenta].size();
+                            // 
+                            // if (nova_velikos_fronty == (K_POLOZEK - 1)) {
+                            //     pthread_cond_signal(&condy_front[cislo_producenta]);
+                            //     printf("konzument %i odblokoval frontu %i - velikost fronty %i\n",
+                            //         cislo_konzumenta,
+                            //         cislo_producenta,
+                            //         velikos_fronty);
+                            // }
+                        }
+
+                        poradova_cisla_poslednich_prectenych_prveku[cislo_producenta]
+                            = prectene_poradove_cislo;
+                    }
+            }
+            odemkni_frontu(cislo_producenta);
+            
+            if (nove_nacteny) {
+                printf("%s cte z fronty %i prvek %i - pocet precteni %i\n",
+                    process_name,
+                    cislo_producenta,
+                    prectene_poradove_cislo,
+                    pocet_precteni);
+                nove_nacteny = false;
+            }
+            
+            if (prvek_odstranen) {
+                printf("%s odsranil z fronty %i prvek %i - velikost fronty %i\n",
+                    process_name,
+                    cislo_producenta,
+                    prectene_poradove_cislo,
+                    nova_velikos_fronty);
+                prvek_odstranen = false;
+            }
+            
+            if (ukonci_cteni) {
+                ukonci_cteni =
+                    poradova_cisla_poslednich_prectenych_prveku[cislo_producenta] == (LIMIT_PRVKU - 1);
+            }
+        }
     }
     
     printf("%s done.\n", process_name);
 }
 
 int main(int argc, char * const argv[]) {
+    // Fronta *f = malloc(Fronta::get_total_sizeof());
+    // Prvke p;
+    // p.poradove_cislo
+    
     pid_t root_pid = getpid();
     bool exception = false;
     
