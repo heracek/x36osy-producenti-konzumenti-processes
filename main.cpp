@@ -545,6 +545,7 @@ int main(int argc, char * const argv[]) {
         NUM_CHILDREN = M_PRODUCENTU + N_KONZUMENTU;
     } else {
         printf("Usage:\n\t %s M_PRODUCENTU N_KONZUMENTU K_POLOZEK LIMIT_PRVKU\n\n", argv[0]);
+        exit(1);
     }
     
     pid_t root_pid = getpid();
