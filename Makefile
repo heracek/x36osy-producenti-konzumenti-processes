@@ -12,7 +12,7 @@ main:main.cpp
 	$(CC) $(CFLAGS) -o main main.cpp $(LIBS)
 
 run:main
-	./main
+	./main 5 3 4 10
 
 clear:
 	\rm main 

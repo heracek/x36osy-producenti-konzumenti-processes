@@ -22,21 +22,21 @@ struct Prvek;
 struct Fronta;
 struct Shared;
 
-const int M_PRODUCENTU = 10;
-const int N_KONZUMENTU = 3;
-const int K_POLOZEK = 4;
-const int LIMIT_PRVKU = 10;
+int M_PRODUCENTU = 9;
+int N_KONZUMENTU = 3;
+int K_POLOZEK = 4;
+int LIMIT_PRVKU = 50;
+int NUM_CHILDREN = M_PRODUCENTU + N_KONZUMENTU;
+int MAX_NAHODNA_DOBA = 5000000;
 const int MAX_NAME_SIZE = 30;
-const int NUM_CHILDREN = M_PRODUCENTU + N_KONZUMENTU;
-const int MAX_NAHODNA_DOBA = 5000000;
 
 pid_t *child_pids;
 int shared_mem_segment_id;
-Shared *shared;
 Fronta **fronty;
 char process_name[MAX_NAME_SIZE];
 int sem_pristup_ke_fronte;
 int sem_mohu_vlozit;
+Shared *shared;
 
 struct Prvek {
     int cislo_producenta;
@@ -101,17 +101,9 @@ public:
         return this->_size;
     }
         
-    Prvek* front() {
-        int i = _index_of_first % K_POLOZEK;
-        return &this->_get_array_of_prvky()[i];
-    }
-    
+    Prvek* front();
     void push(Prvek &prvek);
-    
-    void pop() {
-        this->_size--;
-        this->_index_of_first = (this->_index_of_first + 1) % K_POLOZEK;
-    }
+    void pop();
     
     static int get_total_sizeof() {
         return sizeof(Fronta) + sizeof(Prvek) * K_POLOZEK;
@@ -169,11 +161,29 @@ struct Shared {
 void Fronta::push(Prvek &prvek) {
     if (this->_size >= K_POLOZEK) {
         shared->pokracovat_ve_vypoctu = 0;
-        throw 1;
+        throw 2;
     }
     memcpy(this->next_back(), &prvek, sizeof(Prvek));
     this->_size++;
 };
+
+Prvek* Fronta::front() {
+    if (this->_size <= 0) {
+        shared->pokracovat_ve_vypoctu = 0;
+        throw 1;
+    }
+    int i = _index_of_first % K_POLOZEK;
+    return &this->_get_array_of_prvky()[i];
+}
+
+void Fronta::pop() {
+    if (this->_size <= 0) {
+        shared->pokracovat_ve_vypoctu = 0;
+        throw 3;
+    }
+    this->_size--;
+    this->_index_of_first = (this->_index_of_first + 1) % K_POLOZEK;
+}
 
 void pockej_nahodnou_dobu() {
     double result = 0.0;
@@ -257,7 +267,7 @@ int semaphore_up(int semid, int sem_index) {
     sembuf operations[1];
     operations[0].sem_num = sem_index;
     operations[0].sem_op = 1;
-    operations[0].sem_flg= SEM_UNDO;
+    operations[0].sem_flg = SEM_UNDO;
     
     return semop(semid, operations, 1);
 }
@@ -382,7 +392,7 @@ void producent(int cislo_producenta) {
             odemkni_frontu(cislo_producenta);
             
             printf("%s pridal prvek %i - velikos fronty %i\n",
-                process_name, poradove_cislo, velikos_fronty);
+               process_name, poradove_cislo, velikos_fronty);
             
             pockej_nahodnou_dobu();
         } else {
@@ -469,19 +479,10 @@ void konzument(int cislo_konzumenta) {
                         if (pocet_precteni >= N_KONZUMENTU) {
                             fronty[cislo_producenta]->pop();
                             nova_velikos_fronty = fronty[cislo_producenta]->size();
-                            umozni_vlozeni_prvku(cislo_producenta);
+                            umozni_vlozeni_prvku(prectene_cislo_producenta);
                             
                             
                             prvek_odstranen = true;
-                            // nova_velikos_fronty = xfronty[cislo_producenta].size();
-                            // 
-                            // if (nova_velikos_fronty == (K_POLOZEK - 1)) {
-                            //     pthread_cond_signal(&condy_front[cislo_producenta]);
-                            //     printf("konzument %i odblokoval frontu %i - velikost fronty %i\n",
-                            //         cislo_konzumenta,
-                            //         cislo_producenta,
-                            //         velikos_fronty);
-                            // }
                         }
 
                         poradova_cisla_poslednich_prectenych_prveku[cislo_producenta]
@@ -490,6 +491,23 @@ void konzument(int cislo_konzumenta) {
             }
             odemkni_frontu(cislo_producenta);
             
+            /*
+            if (!nove_nacteny && !prvek_odstranen) {
+                printf("%s cte z fronty %i prvek %i - pocet precteni %i - POSLEDNI PRECTENY %d - NEDELE NIC - N_KONZUMENTU: %d.\n",
+                    process_name,
+                    cislo_producenta,
+                    prectene_poradove_cislo,
+                    pocet_precteni,
+                    poradova_cisla_poslednich_prectenych_prveku[cislo_producenta],
+                    N_KONZUMENTU);
+                
+                for (int i = 0; i < M_PRODUCENTU; i++) {
+                    printf("Semafory nastaveny na: sem_mohu_vlozit(%d), sem_pristup_ke_fronte(%d)\n",
+                        semaphore_get(sem_mohu_vlozit, i),
+                        semaphore_get(sem_pristup_ke_fronte, i));
+                }
+            }
+            */
             if (nove_nacteny) {
                 printf("%s cte z fronty %i prvek %i - pocet precteni %i\n",
                     process_name,
@@ -519,9 +537,15 @@ void konzument(int cislo_konzumenta) {
 }
 
 int main(int argc, char * const argv[]) {
-    // Fronta *f = malloc(Fronta::get_total_sizeof());
-    // Prvke p;
-    // p.poradove_cislo
+    if (argc != 1) {
+        sscanf(argv[1], "%d", &M_PRODUCENTU);
+        sscanf(argv[2], "%d", &N_KONZUMENTU);
+        sscanf(argv[3], "%d", &K_POLOZEK);
+        sscanf(argv[4], "%d", &LIMIT_PRVKU);
+        NUM_CHILDREN = M_PRODUCENTU + N_KONZUMENTU;
+    } else {
+        printf("Usage:\n\t %s M_PRODUCENTU N_KONZUMENTU K_POLOZEK LIMIT_PRVKU\n\n", argv[0]);
+    }
     
     pid_t root_pid = getpid();
     bool exception = false;
@@ -568,14 +592,14 @@ int main(int argc, char * const argv[]) {
     }
     
     if (getpid() == root_pid) {
-        root_finish();
+        atexit(root_finish);
     }
     
     if ( ! exception) {
         printf("All OK. Done.\n");
         return 0;
     } else {
-        printf("%s exception caught in main(). Done.\n", process_name);
+        printf("--------------------------------- %s exception caught in main(). Done.\n", process_name);
         return 1;
     }
 }

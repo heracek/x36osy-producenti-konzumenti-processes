@@ -79,10 +79,29 @@
   </pre></code>
 
   <h2>Řešení úlohy pomocí procesů</h2>
-
+  
+  
+  
+  <p>
+    Řešení je implementována jako <em>N</em> + <em>M</em> + 1 procesů. Prvni proces vytvory producenty
+    a konzumenty a ceka na jejich ukonceni. Fronty producentů (sdílená data) jsou uloženy v jednom segmentu
+    sdílené paměti a jsou přístupné po volání <code>child_init()</code> přes ukazatel na pole
+    <code>fronty</code>. Přístup ke frontám je řízen dvěma sadami semaforu (každá sada má velikost <em>M</em>),
+    první sada urcuje, zda se da s frontou manipulovat, druhá, zda se dá do fronty přidávat.
+    Sdílené prostredky alokoje a dealokuje první proces.
+  </p>
+  
+  <p>
+    Signály SIGQUIT, SIGINT, SIGHUP a SIGTERM jsou odchyceny a dealokace sdílených prostredků probíhá
+    správně i při jejich vyvolání.
+    
+  </p>
+  
+  
   <h2>Závěr</h2> 
   
-  Uloha mi pomohla prakticky vyzkouset tvoreni vlaken a jejich synchronizaci.
+  Uloha mi pomohla prakticky vyzkouset tvoreni vlaken, jejich synchronizaci pomoci vlaken
+  a take vytvareni procesu, sdilene pameti a obsluhu semaforu.
 
   <h2>Literatura</h2>
   
